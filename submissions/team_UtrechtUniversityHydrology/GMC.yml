@@ -1,0 +1,15 @@
+name: GMC
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - numpy=1.21
+  - pandas=1.4
+  - pytorch=1.12
+  - cudatoolkit=11.3
+  - scikit-learn=1.1
+  - matplotlib=3.5
+  - plotnine=0.9
+  - plotly=5.10
