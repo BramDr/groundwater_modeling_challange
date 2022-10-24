@@ -71,3 +71,4 @@ for location in locations:
     sub["Simulated Head"] = y_pred.flatten()
     sub["95% Lower Bound"] = y_pred_bounds[0]
     sub["95% Upper Bound"] = y_pred_bounds[1]
+    sub.to_csv(sub_file)
