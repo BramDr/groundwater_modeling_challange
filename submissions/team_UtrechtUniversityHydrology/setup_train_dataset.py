@@ -2,7 +2,10 @@ import pathlib as pl
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import sklearn.preprocessing as pp
+import datetime as dt
 import torch
+import pickle
 
 from SequenceDataset import SequenceDataset
 
@@ -15,6 +18,7 @@ locations = ["Germany", "Netherlands", "Sweden_1", "Sweden_2", "USA"]
 cuda = True
 
 ## Load data
+location = locations[0]
 for location in locations:
     print(location)
     
@@ -29,47 +33,62 @@ for location in locations:
     in_features = input.keys().to_list()[1:]
     out_features = output.keys().to_list()[1:]
     
-    sequences = list(set(output[output.keys()[0]].to_list()))
-    overlapping = [time in sequences for time in input[input.keys()[0]]]
+    x_sequences = list(set(input[input.keys()[0]].to_list()))
+    x_sequences.sort()
+    x_sequences = [dt.datetime.strptime(sequence, "%Y-%m-%d") for sequence in x_sequences]
+    
+    y_sequences = list(set(output[output.keys()[0]].to_list()))
+    y_sequences.sort()
+    y_sequences = [dt.datetime.strptime(sequence, "%Y-%m-%d") for sequence in y_sequences]
+    
+    overlapping = [t in y_sequences for t in x_sequences]
+    sequences = y_sequences
     
     x = input.loc[overlapping, in_features].to_numpy()
     x = np.expand_dims(a = x, axis = 0)
     y = output.loc[:, out_features].to_numpy()
     y = np.expand_dims(a = y, axis = 0)
+
+    ## Visual check
+    plt.plot(sequences, x[:,:,0].flatten())
+    plt.plot(sequences, input.loc[overlapping, in_features[0]])
+    plt.show()
+    
+    plt.plot(sequences, y.flatten())
+    plt.plot(sequences, output[out_features[0]])
+    plt.show()
     
     ## Normalize data
-    x_min = np.min(a = x, axis = 1, keepdims=True)
-    x_max = np.max(a = x, axis = 1, keepdims=True)
-    x_diff = x_max - x_min
-
-    y_min = np.min(a = y, axis = 1, keepdims=True)
-    y_max = np.max(a = y, axis = 1, keepdims=True)
-    y_diff = y_max - y_min
-
-    x_norm = (x - x_min) / x_diff
-    y_norm = (y - y_min) / y_diff
+    #x_transformer = pp.QuantileTransformer(n_quantiles=10000)
+    x_transformer = pp.MinMaxScaler()
+    x_norm = np.reshape(a=x, newshape=(-1, x.shape[2])).copy()
+    x_norm = x_transformer.fit_transform(X=x_norm)
+    x_norm = np.reshape(a=x_norm, newshape=x.shape)
+    
+    #y_transformer = pp.QuantileTransformer(n_quantiles=10000)
+    y_transformer = pp.MinMaxScaler()
+    y_norm = np.reshape(a=y, newshape=(-1, y.shape[2])).copy()
+    y_norm = y_transformer.fit_transform(X=y_norm)
+    y_norm = np.reshape(a=y_norm, newshape=y.shape)
     
     ## Create dataset
     dataset = SequenceDataset(x = x_norm,
-                            y = y_norm,
-                            samples=locations,
-                            sequences=sequences,
-                            in_features=in_features,
-                            out_features=out_features,
-                            cuda=cuda)
+                              y = y_norm,
+                              samples=locations,
+                              sequences=sequences,
+                              in_features=in_features,
+                              out_features=out_features,
+                              cuda=cuda)
     
-    dataset_out = pl.Path("{}/{}/dataset.pt".format(dir_out, location))
-    normalize_x_out = pl.Path("{}/{}/normalize_x.npy".format(dir_out, location))
-    normalize_y_out = pl.Path("{}/{}/normalize_y.npy".format(dir_out, location))
-    
+    dataset_out = pl.Path("{}/{}/dataset.pt".format(dir_out, location))    
     dataset_out.parent.mkdir(parents=True, exist_ok=True)
     torch.save(dataset, dataset_out)
-    normalize_x_out.parent.mkdir(parents=True, exist_ok=True)
-    np.save(normalize_x_out, (x_min, x_max))
-    normalize_y_out.parent.mkdir(parents=True, exist_ok=True)
-    np.save(normalize_y_out, (y_min, y_max))
-
-    ## Visual check
-    plt.plot(y.flatten())
-    plt.plot(output["head"])
-    plt.show()
+    
+    x_transformer_out = pl.Path("{}/{}/x_transformer.pkl".format(dir_out, location))
+    y_transformer_out = pl.Path("{}/{}/y_transformer.pkl".format(dir_out, location))
+    x_transformer_out.parent.mkdir(parents=True, exist_ok=True)
+    with open(x_transformer_out, 'wb') as file:
+        pickle.dump(x_transformer, file)
+    y_transformer_out.parent.mkdir(parents=True, exist_ok=True)
+    with open(y_transformer_out, 'wb') as file:
+        pickle.dump(y_transformer, file)

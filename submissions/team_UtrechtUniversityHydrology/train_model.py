@@ -11,18 +11,21 @@ from SequenceModel import SequenceModel
 save_dir = pl.Path("./saves")
 dir_out = pl.Path("./saves")
 locations = ["Germany", "Netherlands", "Sweden_1", "Sweden_2", "USA"]
-epochs = 1000
-hidden_size = 256
+epochs = 5000
+hidden_size = 512
+n_lstm = 3
 dropout_rate = 0.25
 seed = 19920223
 cuda = True
 
 ## Load
+location = locations[0]
 for location in locations:
     print(location)
     
     dataset_file = pl.Path("{}/{}/dataset.pt".format(save_dir,
                                                      location))
+    
     dataset = torch.load(dataset_file)
 
     ## Setup model
@@ -30,6 +33,7 @@ for location in locations:
     out_size = len(dataset.out_features)
     model = SequenceModel(in_size=in_size,
                         hidden_size=hidden_size,
+                        n_lstm=n_lstm,
                         out_size=out_size,
                         dropout_rate=dropout_rate,
                         cuda=cuda)
@@ -74,6 +78,6 @@ for location in locations:
     ## Visual check
     y_true = y_true.detach().cpu().numpy()
     y_pred = y_pred.detach().cpu().numpy()
-    plt.plot(y_true.flatten())
-    plt.plot(y_pred.flatten())
+    plt.plot(dataset.sequences, y_true.flatten())
+    plt.plot(dataset.sequences, y_pred.flatten())
     plt.show()
