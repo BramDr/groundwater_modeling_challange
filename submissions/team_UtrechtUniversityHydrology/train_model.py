@@ -2,8 +2,10 @@ import pathlib as pl
 import random
 import torch
 import torch.optim as opt
+import sklearn.preprocessing as pp
 import matplotlib.pyplot as plt
 import torch.nn.functional as fun
+import pickle
 
 from SequenceModel import SequenceModel
 
@@ -11,10 +13,12 @@ from SequenceModel import SequenceModel
 save_dir = pl.Path("./saves")
 dir_out = pl.Path("./saves")
 locations = ["Germany", "Netherlands", "Sweden_1", "Sweden_2", "USA"]
-epochs = 5000
+epochs = 1000
 hidden_size = 512
-n_lstm = 3
+sequence_size = 100
 dropout_rate = 0.25
+learning_rate = 1e-2
+transformer_base = pp.QuantileTransformer
 seed = 19920223
 cuda = True
 
@@ -23,61 +27,82 @@ location = locations[0]
 for location in locations:
     print(location)
     
-    dataset_file = pl.Path("{}/{}/dataset.pt".format(save_dir,
-                                                     location))
+    train_file = pl.Path("{}/{}/train_dataset.pt".format(save_dir, location))    
+    test_file = pl.Path("{}/{}/test_dataset.pt".format(save_dir, location))
     
-    dataset = torch.load(dataset_file)
+    train_dataset = torch.load(train_file)
+    test_dataset = torch.load(test_file)
+    
+    train_dataset.set_sequence_size(sequence_size)
+    x_transformer, y_transformer = train_dataset.transform(x_transformer = transformer_base(), 
+                                                           y_transformer = transformer_base(),
+                                                           fit=True)
+    x_transformer, y_transformer = test_dataset.transform(x_transformer = x_transformer, 
+                                                            y_transformer = y_transformer,
+                                                            fit=False)
+
+    x_transformer_out = pl.Path("{}/{}/x_transformer.pkl".format(dir_out, location))
+    x_transformer_out.parent.mkdir(parents=True, exist_ok=True)
+    with open(file=x_transformer_out, mode="wb") as file:
+        pickle.dump(x_transformer, file)
+    
+    y_transformer_out = pl.Path("{}/{}/y_transformer.pkl".format(dir_out, location))
+    y_transformer_out.parent.mkdir(parents=True, exist_ok=True)
+    with open(file=y_transformer_out, mode="wb") as file:
+        pickle.dump(y_transformer, file)
 
     ## Setup model
-    in_size = len(dataset.in_features)
-    out_size = len(dataset.out_features)
+    in_size = train_dataset.x.shape[2]
+    out_size = train_dataset.y.shape[2]
     model = SequenceModel(in_size=in_size,
                         hidden_size=hidden_size,
-                        n_lstm=n_lstm,
                         out_size=out_size,
                         dropout_rate=dropout_rate,
                         cuda=cuda)
-    model = model.train(mode = True)
     print(model)
 
     # Setup training
-    optimizer = opt.Adam(params = model.parameters())
-
-    dataset_len = len(dataset)
-    dataset_indices = [index for index in range(dataset_len)]
+    optimizer = opt.Adam(params = model.parameters(), 
+                         lr=learning_rate)
 
     ## Train and save
     random.seed(seed)
     
     best_loss = float("inf")
     for epoch in range(epochs):
-        indices = random.sample(population=dataset_indices,
-                                k = dataset_len)
         
-        epoch_loss = 0
-        for index in indices:
-            x, y_true = dataset[index]
+        # TRAINING
+        x, y_true = train_dataset[0]
+        model = model.train(mode = True)
+        y_pred = model.forward(x)
+        
+        true_sel = ~torch.isnan(y_true)
+        train_loss = fun.mse_loss(input = y_pred[true_sel], target = y_true[true_sel])
+        
+        optimizer.zero_grad()
+        train_loss.backward()
+        optimizer.step()
+        
+        # TESTING
+        x, y_true = test_dataset[0]
+        model = model.train(mode = False)
+        with torch.inference_mode():
             y_pred = model.forward(x)
             
-            loss = fun.mse_loss(input = y_pred, target = y_true)        
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            
-            epoch_loss += loss.item()
+        true_sel = ~torch.isnan(y_true)
+        test_loss = fun.mse_loss(input = y_pred[true_sel], target = y_true[true_sel])
         
-        epoch_loss /= len(indices)
-        print("Epoch {}: {}".format(epoch, epoch_loss))
+        print("Epoch {}: train loss {}, test loss {}".format(epoch, train_loss, test_loss))
         
-        if epoch_loss < best_loss:
-            best_loss = epoch_loss
+        if test_loss < best_loss:
+            best_loss = test_loss
             state_dict_out = pl.Path("{}/{}/best_state_dict.pt".format(dir_out,
                                                                        location))
             torch.save(model.state_dict(), state_dict_out)
-
+    
     ## Visual check
     y_true = y_true.detach().cpu().numpy()
     y_pred = y_pred.detach().cpu().numpy()
-    plt.plot(dataset.sequences, y_true.flatten())
-    plt.plot(dataset.sequences, y_pred.flatten())
+    plt.scatter(test_dataset.dates, y_true.flatten(), color = '#88c999')
+    plt.plot(test_dataset.dates, y_pred.flatten())
     plt.show()
